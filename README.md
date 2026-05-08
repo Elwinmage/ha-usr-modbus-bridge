@@ -1,62 +1,265 @@
 # ha-usr-modbus-bridge
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/custom-components/hacs)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Home Assistant custom integration for **USR serial-to-ethernet converters** (USR-TCP232-304, USR-TCP232-306, USR-N510) operating in transparent TCP mode, bridging RS-485 Modbus devices.
 
+---
+
 ## Supported devices
 
-| Device | Protocol | Status |
-|--------|----------|--------|
-| Madimack InverFlow Eco | Modbus RTU 9600 8N1 addr=0xAA | ✅ Supported |
+| Device | Manufacturer | Protocol | Baud | Address | Status |
+|--------|-------------|----------|------|---------|--------|
+| InverFlow Eco | Madimack / Aquagem | Modbus RTU 8N1 | 9600 | 0xAA (170) | ✅ Fully supported |
 
-## Installation
+> The InverFlow Eco is an OEM version of the Aquagem InverPro pool pump. All variants sharing the same controller (Madimack, Aquagem, Fairland INVERX, etc.) should be compatible.
 
-### HACS (recommended)
-1. Add this repo as a custom repository in HACS
-2. Install "USR Modbus Bridge"
-3. Restart Home Assistant
-
-### Manual
-Copy `custom_components/usr_modbus_bridge/` to your HA `custom_components/` folder and restart.
-
-## Configuration
-
-1. Go to **Settings → Devices & Services → Add Integration**
-2. Search for **USR Modbus Bridge**
-3. **Step 1 — Gateway**: enter IP, port (default 8899), baud rate (default 9600)
-4. **Step 2 — Device**: select device type, Modbus address, friendly name
+---
 
 ## Hardware setup
 
 ```
-Home Assistant ──TCP──▶ USR-TCP232-304 ──RS485──▶ InverFlow Eco
-                         192.168.0.8:8899          addr=0xAA (170)
-                         9600 baud 8N1             PIN6=A+ PIN7=B-
+Home Assistant
+     │
+     │ TCP
+     ▼
+USR-TCP232-304          ← transparent TCP→RS485 bridge
+192.168.0.x : 8899
+9600 baud / 8N1
+     │
+     │ RS-485 (PIN6=A+  PIN7=B-)
+     ▼
+InverFlow Eco pump
+Modbus addr 170 (0xAA)
 ```
 
-## Entities created (InverFlow Eco)
+### USR converter wiring
+
+| InverFlow connector | USR terminal |
+|---------------------|-------------|
+| PIN 6 (RS485 A / DATA+) | A+ |
+| PIN 7 (RS485 B / DATA−) | B− |
+| PIN 5 (GND) | GND (optional) |
+
+### USR-TCP232-304 configuration
+
+| Parameter | Value |
+|-----------|-------|
+| Work Mode | **TCP Server** |
+| Local Port | 8899 |
+| Baud Rate | 9600 |
+| Data Size | 8 bit |
+| Parity | None |
+| Stop Bits | 1 |
+| Similar RFC2217 | **❌ OFF** |
+| TCP Server-kick off old connection | **❌ OFF** |
+| Modbus Type | None |
+| Buffer Data Before Connected | ❌ OFF |
+
+> ⚠️ **RFC2217 must be disabled.** When enabled, the USR receives TCP data but does not forward it to RS-485 (TX stays at 0 bytes).
+
+---
+
+## Installation
+
+### HACS (recommended)
+
+1. In HACS → Integrations → ⋮ → Custom repositories
+2. Add `https://github.com/Elwinmage/ha-usr-modbus-bridge` as **Integration**
+3. Install **USR Modbus Bridge**
+4. Restart Home Assistant
+
+### Manual
+
+Copy `custom_components/usr_modbus_bridge/` into your HA `custom_components/` folder and restart.
+
+---
+
+## Configuration
+
+1. **Settings → Devices & Services → Add Integration**
+2. Search for **USR Modbus Bridge**
+
+### Step 1 — Gateway
+
+| Field | Description |
+|-------|-------------|
+| Gateway model | USR-TCP232-304 / USR-TCP232-306 / USR-N510 / Other |
+| IP address | IP of the USR converter |
+| TCP port | Default: 8899 |
+| Baud rate | Must match converter setting (default: 9600) |
+| Data bits | 8 |
+| Parity | None |
+| Stop bits | 1 |
+
+### Step 2 — Device
+
+| Field | Description |
+|-------|-------------|
+| Device type | Select from supported device profiles |
+| Modbus address | Decimal — InverFlow default: **170** |
+| Friendly name | Name shown in HA |
+| Poll interval | How often to read registers (2–300 s, default 10 s) |
+
+### Options (post-setup)
+
+Click **Configure** on the integration entry to change baud rate, bus parameters, and poll interval without re-adding the integration. Changes trigger an automatic reload.
+
+---
+
+## Entities
+
+### InverFlow Eco
 
 | Entity | Type | Description |
 |--------|------|-------------|
-| `switch.*_power` | Switch | ON (last speed) / OFF (setpoint=0) |
-| `sensor.*_speed` | Sensor | Actual speed % |
-| `number.*_speed_setpoint` | Number | Target speed 0-100% (slider) |
-| `sensor.*_power` | Sensor | Instant power W |
-| `sensor.*_motor_temperature` | Sensor | Motor temperature °C |
-| `sensor.*_energy_today` | Sensor | Energy today Wh |
-| `sensor.*_energy_total` | Sensor | Total energy counter |
+| `switch.*_power` | Switch | Turn pump ON (restores last speed) / OFF (setpoint=0) |
+| `sensor.*_speed` | Sensor | Actual running speed % |
+| `sensor.*_power` | Sensor | Instant power consumption W |
+| `number.*_speed_setpoint` | Number | Target speed slider 0–100% |
+| `button.*_restart_connection` | Button | Force TCP reconnect + wake-up ping |
+| `sensor.*_error` | Sensor (diag) | Decoded error text from register 2001 |
+| `sensor.*_firmware_const_*` | Sensor (diag) | Raw firmware constants (hidden by default) |
+
+> Diagnostic entities are hidden by default. Enable them via **Entity → Settings → Visible**.
+
+---
+
+## Resilience
+
+The integration handles several failure modes automatically:
+
+| Situation | Behaviour |
+|-----------|-----------|
+| Pump RS-485 asleep after power cut | **Wake-up ping** sent at startup and after every reconnect (single read of register 0x07D1) |
+| All registers return ERR for 3 consecutive polls | Automatic TCP reconnect + wake-up |
+| No valid data received for 5 minutes | Automatic TCP reconnect + wake-up |
+| Manual recovery needed | Press the **Restart connection** button |
+
+> ⚠️ The USR converter only accepts **one TCP client at a time**. Do not run diagnostic scripts (socat, Python monitor) while the HA integration is active.
+
+---
+
+## InverFlow Eco — Modbus register map
+
+> Confirmed by RS-485 capture session and Tuya/Modbus correlation (2026-05-08).
+
+### Read registers (FC=03, device address 0xAA)
+
+| Register (hex) | Register (dec) | Key | Description | Notes |
+|----------------|----------------|-----|-------------|-------|
+| 0x07D1 | 2001 | `error_code` | Error bitmask | 0 = no error. Also used as wake-up register |
+| 0x07D2 | 2002 | `op_condition` | Operation condition bitmask | bit0=1 → running |
+| 0x07D3 | 2003 | `speed_pct` | Running capacity % | Actual speed, not setpoint |
+| 0x07D4 | 2004 | `power_w` | Instant power W | Confirmed vs Tuya DPS 5 |
+| 0x07D7 | 2007 | `const_2007` | Firmware constant | Fixed value, meaning unknown |
+| 0x07D8 | 2008 | `const_2008` | Firmware constant | Fixed value, meaning unknown |
+| 0x07D9 | 2009 | `const_2009` | Firmware constant | Fixed value, meaning unknown |
+
+### Write register (FC=06)
+
+| Register (hex) | Register (dec) | Description | Range |
+|----------------|----------------|-------------|-------|
+| 0x0BB9 | 3001 | Speed setpoint % | 0 = stop, 30–100 = run |
+
+> Speed is automatically snapped to the nearest 5% and clamped to 30% minimum when running.
+
+### Error bitmask (register 2001)
+
+| Bit | Error |
+|-----|-------|
+| 0 | DC voltage abnormal |
+| 1 | AC current sampling circuit failure |
+| 2 | Phase-deficient protection |
+| 3 | Master drive error |
+| 4 | Heatsink sensor error |
+| 5 | Heatsink overheat |
+| 6 | Output current exceeds limit |
+| 7 | Input voltage abnormal |
+| 8 | No water protection |
+| 9 | Panel↔master comm failure |
+| 10 | Panel EEPROM read error |
+| 11 | RTC read error |
+| 12 | Main EEPROM read error |
+| 13 | Motor current detection error |
+| 14 | Motor power overload |
+| 15 | PFC protection |
+
+### ON/OFF strategy
+
+The InverFlow Eco has **no dedicated ON/OFF Modbus register**. The integration implements it via the setpoint:
+
+- `turn_off` → write 0 to register 0x0BB9
+- `turn_on` → write last known speed (default 80%) to register 0x0BB9
+
+The `switch` entity reads `op_condition` bit 0 for the actual running state.
+
+### Wake-up behaviour
+
+After a power cut or extended RS-485 silence, the pump stops responding to Modbus. A single FC=03 read on register **0x07D1** (error code) re-activates the RS-485 interface. This is sent automatically at startup and after every TCP reconnect.
+
+---
 
 ## Adding new devices
 
-Create `custom_components/usr_modbus_bridge/bridge/devices/mydevice.py`,
-subclass `ModbusDevice`, and register it in `const.py → DEVICE_PROFILES`.
+1. Create `custom_components/usr_modbus_bridge/bridge/devices/mydevice.py`
+2. Subclass `ModbusDevice` from `bridge/devices/base.py`
+3. Declare `READ_REGISTERS`, implement `set_speed()`, set `WAKE_UP_REGISTER` if needed
+4. Register the class in `const.py → DEVICE_PROFILES`
 
-## Notes
+```python
+# Example skeleton
+from .base import ModbusDevice, RegisterDef
 
-- ON/OFF is implemented via setpoint: `turn_off` writes 0, `turn_on` restores last speed
-- No dedicated ON/OFF Modbus register found on the InverFlow Eco
-- Register map confirmed by Modbus/Tuya correlation session
+class MyDevice(ModbusDevice):
+    DEVICE_KEY       = "my_device"
+    DEVICE_NAME      = "My Pool Pump"
+    MODBUS_ADDRESS   = 0x01
+    WAKE_UP_REGISTER = 0x0001  # optional
+
+    READ_REGISTERS = [
+        RegisterDef(0x0001, "speed", "Speed", "%", 1, 0),
+        RegisterDef(0x0002, "power", "Power", "W", 1, 0),
+    ]
+
+    async def set_speed(self, client, speed_pct: int) -> bool:
+        return await client.write_register(self.MODBUS_ADDRESS, 0x0010, speed_pct)
+
+    @property
+    def sensor_keys(self): return ["speed", "power"]
+    @property
+    def switch_key(self): return "speed"
+```
+
+---
+
+## Troubleshooting
+
+### Pump does not respond after power cut
+Press the **Restart connection** button. The wake-up ping will re-activate the RS-485 interface.
+
+### TX counter stays at 0 on USR web interface
+- Disable **Similar RFC2217** in the USR web interface → Save → power cycle the USR
+- Disable **TCP Server-kick off old connection**
+
+### All entities show unavailable
+- Check that no other client (socat, Python script) is connected to port 8899
+- Verify the USR is reachable: `nc -zv <USR_IP> 8899`
+- Check HA logs for connection errors
+
+### Integration does not find the device during setup
+- Confirm the Modbus address in the pump menu (InverFlow Eco default: **170**)
+- Ensure the pump is powered on and the RS-485 bus is wired correctly (PIN6=A+, PIN7=B−)
+
+---
+
+## Related projects
+
+- [ha-usr-r16-component](https://github.com/Elwinmage/ha-usr-r16-component) — USR-R16 relay controller integration
+- [ESPHome InverFlow config](https://forums.whirlpool.net.au/archive/3kpyw2n7) — community ESPHome YAML for the same pump
+
+---
 
 ## License
 
