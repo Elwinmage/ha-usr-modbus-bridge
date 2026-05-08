@@ -17,16 +17,24 @@ PLATFORMS = [Platform.SWITCH, Platform.SENSOR, Platform.NUMBER, Platform.BUTTON]
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     cfg = {**entry.data, **entry.options}
+
     profile_cls = DEVICE_PROFILES[cfg[CONF_DEVICE_KEY]]
     device      = profile_cls(name=cfg[CONF_NAME])
     device.MODBUS_ADDRESS = cfg[CONF_DEVICE_ADDRESS]
+
     client = ModbusTCPClient(host=cfg[CONF_HOST], port=cfg[CONF_PORT], baud=cfg[CONF_BAUD])
     await client.connect()
+
     coordinator = ModbusBridgeCoordinator(
         hass, client, device, entry.entry_id,
         scan_interval=cfg.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
     )
+
+    # Wake-up ping before first poll — device RS-485 may be sleeping
+    await coordinator._async_wake_up()
+
     await coordinator.async_config_entry_first_refresh()
+
     hass.data[DOMAIN][entry.entry_id] = {COORDINATOR: coordinator}
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
