@@ -1,7 +1,18 @@
 # ha-usr-modbus-bridge
 
+<p align="center">
+  <img src="custom_components/usr_modbus_bridge/brand/logo.png" alt="USR Modbus Bridge logo" width="200"/>
+</p>
+
+<p align="center">
+  <img src="doc/img/card.png" alt="USR Modbus Bridge card" width="600"/>
+</p>
+
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/custom-components/hacs)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![IoT Class](https://img.shields.io/badge/IoT%20Class-Local%20Polling-green?style=flat-square)](https://developers.home-assistant.io/docs/architecture_index/)
+[![GH-release](https://img.shields.io/github/v/release/Elwinmage/ha-usr-modbus-bridge.svg?style=flat-square)](https://github.com/Elwinmage/ha-usr-modbus-bridge/releases)
+[![BuyMeCoffee](https://img.shields.io/badge/buy%20me%20a%20coffee-donate-yellow.svg?style=flat-square)](https://paypal.me/Elwinmage)
 
 Home Assistant custom integration for **USR serial-to-ethernet converters** (USR-TCP232-304, USR-TCP232-306, USR-N510) operating in transparent TCP mode, bridging RS-485 Modbus devices.
 
