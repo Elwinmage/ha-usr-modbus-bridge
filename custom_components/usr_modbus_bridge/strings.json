@@ -1,0 +1,31 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "USR Modbus Bridge — Gateway",
+        "data": {
+          "gateway_model": "Gateway model",
+          "host":          "IP address",
+          "port":          "TCP port",
+          "baud":          "Baud rate"
+        }
+      },
+      "device": {
+        "title": "USR Modbus Bridge — Device",
+        "data": {
+          "device_key":     "Device type",
+          "device_address": "Modbus address (decimal)",
+          "name":           "Friendly name"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect":   "Cannot connect to the gateway",
+      "device_not_found": "Device did not respond — check address and wiring",
+      "unknown":          "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "This device is already configured"
+    }
+  }
+}

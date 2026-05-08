@@ -1,0 +1,31 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "USR Modbus Bridge — Passerelle",
+        "data": {
+          "gateway_model": "Modèle de passerelle",
+          "host":          "Adresse IP",
+          "port":          "Port TCP",
+          "baud":          "Vitesse (baud)"
+        }
+      },
+      "device": {
+        "title": "USR Modbus Bridge — Équipement",
+        "data": {
+          "device_key":     "Type d'équipement",
+          "device_address": "Adresse Modbus (décimal)",
+          "name":           "Nom personnalisé"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect":   "Impossible de se connecter à la passerelle",
+      "device_not_found": "L'équipement ne répond pas — vérifiez l'adresse et le câblage",
+      "unknown":          "Erreur inattendue"
+    },
+    "abort": {
+      "already_configured": "Cet équipement est déjà configuré"
+    }
+  }
+}
