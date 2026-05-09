@@ -275,3 +275,84 @@ Press the **Restart connection** button. The wake-up ping will re-activate the R
 ## License
 
 MIT
+
+---
+
+## ESPHome alternative
+
+If you prefer a direct ESP32 solution instead of the USR TCP bridge, you can use an ESP32 with a MAX485 module connected directly to the pump RS-485 bus.
+
+### Hardware
+
+<p align="center">
+  <img src="doc/img/max485_module.png" alt="MAX485 module" width="500"/>
+</p>
+
+| Component | Example |
+|-----------|---------|
+| ESP32 dev board | ESP32-DevKitC or any ESP32 board |
+| RS-485 transceiver | MAX485 module (C25B or equivalent) |
+
+### Wiring
+
+```
+ESP32 GPIO14 (TX) ──→ MAX485 DI
+ESP32 GPIO15 (RX) ←── MAX485 RO
+ESP32 GPIO23      ──→ MAX485 RE  ┐ tie together
+ESP32 GPIO23      ──→ MAX485 DE  ┘ (direction control)
+MAX485 VCC        ←── 5V
+MAX485 GND        ──── GND
+MAX485 A (DATA+)  ──── InverFlow connector PIN 6
+MAX485 B (DATA−)  ──── InverFlow connector PIN 7
+```
+
+> ⚠️ **RE and DE must be tied together** on the MAX485 module. When the ESP32 drives GPIO23 HIGH, the module transmits. When LOW, it receives.
+
+### ESPHome configuration
+
+The full YAML is available in [`doc/inverflow_esphome.yaml`](doc/inverflow_esphome.yaml).
+
+Key features of the config:
+
+- **Wake-up ping** at boot: reads register `0x07D1` to re-activate the pump RS-485 interface after power loss
+- **Periodic wake-up** every 5 minutes via `interval:` to keep the bus alive
+- **Manual wake-up button** in HA in case the pump stops responding
+- **Speed setpoint** snapped to nearest 5%, minimum 30% when running
+- **ON/OFF switch** — ON restores last speed, OFF writes 0 to setpoint
+- **Hold-off** on switch to prevent UI flicker during Modbus write/read latency
+- **Error decoder** — converts register 2001 bitmask to human-readable text
+- **Setpoint persisted** across ESP32 reboots via `restore_value: true`
+
+### Quick start
+
+```bash
+# Install ESPHome
+pip install esphome
+
+# Create secrets.yaml with your credentials
+cat > secrets.yaml << 'SECRETS'
+wifi_ssid: "YourSSID"
+wifi_password: "YourPassword"
+api_key: "your_32_byte_base64_api_key"
+ota_password: "your_ota_password"
+ap_password: "fallback_ap_password"
+inverflow_ip: "192.168.0.x"
+gateway: "192.168.0.1"
+subnet: "255.255.255.0"
+SECRETS
+
+# Flash the ESP32
+esphome run doc/inverflow_esphome.yaml
+```
+
+### Entities created by ESPHome
+
+| Entity | Type | Description |
+|--------|------|-------------|
+| `switch.*_power` | Switch | ON/OFF (setpoint 0 / last speed) |
+| `number.*_speed_setpoint` | Number | Target speed slider 30-100% step 5% |
+| `sensor.*_speed` | Sensor | Actual running speed % |
+| `sensor.*_power` | Sensor | Instant power W |
+| `binary_sensor.*_running` | Binary sensor | Running state (op_condition bit 0) |
+| `text_sensor.*_error` | Text sensor | Decoded error from register 2001 |
+| `button.*_wake_up_rs485` | Button | Manual RS-485 wake-up ping |

@@ -1,0 +1,373 @@
+# =============================================================================
+# ESPHome — Madimack InverFlow Eco pool pump
+# Hardware: ESP32 + MAX485 module
+#
+# MAX485 wiring:
+#   ESP32 GPIO15  → MAX485 RO  (receive data)
+#   ESP32 GPIO14  → MAX485 DI  (transmit data)
+#   ESP32 GPIO23  → MAX485 RE  (receive enable,  active LOW)
+#   ESP32 GPIO23  → MAX485 DE  (transmit enable, active HIGH) — tie RE+DE together
+#   MAX485 A (DATA+) → InverFlow connector PIN 6
+#   MAX485 B (DATA−) → InverFlow connector PIN 7
+#   MAX485 VCC       → 5V
+#   MAX485 GND       → GND
+#
+# InverFlow Eco Modbus map (confirmed 2026-05-08):
+#   Read  0x07D1 (2001) — error_code    bitmask (0=OK) — also wake-up register
+#   Read  0x07D2 (2002) — op_condition  bitmask (bit0=1 → running)
+#   Read  0x07D3 (2003) — speed_pct     actual speed %
+#   Read  0x07D4 (2004) — power_w       instant power W
+#   Write 0x0BB9 (3001) — setpoint_pct  target speed % (0=stop, 30-100=run, step 5%)
+#
+# Wake-up behaviour:
+#   After power loss or RS-485 silence, the pump stops responding.
+#   Reading register 0x07D1 re-activates the interface.
+#   This config sends a wake-up read at boot and on every reconnect.
+#
+# Speed constraints:
+#   Minimum: 30%  |  Maximum: 100%  |  Step: 5%  |  0 = stop
+# =============================================================================
+
+esphome:
+  name: inverflow-pool-pump
+  friendly_name: InverFlow Pool Pump
+  on_boot:
+    priority: -200  # run after all components are initialised
+    then:
+      - lambda: |-
+          // Wake-up ping: read register 0x07D1 to re-activate the RS-485 interface
+          // after power loss or extended silence on the bus.
+          ESP_LOGI("inverflow", "Sending RS-485 wake-up ping (reg 0x07D1)...");
+      - modbus_controller.request_again:
+          id: inverflow
+      - delay: 1s
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+  level: INFO
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  fast_connect: true
+  manual_ip:
+    static_ip: !secret inverflow_ip
+    gateway: !secret gateway
+    subnet: !secret subnet
+  ap:
+    ssid: "InverFlow Fallback"
+    password: !secret ap_password
+
+captive_portal:
+
+# -----------------------------------------------------------------------------
+# UART → MAX485 direction-controlled RS-485
+# RE and DE pins are tied together on the MAX485 module
+# -----------------------------------------------------------------------------
+uart:
+  id: uart_modbus
+  tx_pin: GPIO14
+  rx_pin: GPIO15
+  baud_rate: 9600
+  stop_bits: 1
+  parity: NONE
+  data_bits: 8
+
+modbus:
+  id: modbus_bus
+  uart_id: uart_modbus
+  # DE/RE direction pin — HIGH=transmit, LOW=receive
+  flow_control_pin: GPIO23
+  send_wait_time: 250ms
+
+modbus_controller:
+  - id: inverflow
+    address: 0xAA        # 170 — fixed, shown in pump menu
+    modbus_id: modbus_bus
+    update_interval: 10s
+    command_throttle: 250ms
+    setup_priority: -10
+    # Offline callback — log when pump stops responding
+    on_offline:
+      then:
+        - lambda: |-
+            ESP_LOGW("inverflow", "Pump offline — will retry wake-up on next poll");
+
+# -----------------------------------------------------------------------------
+# Globals
+# -----------------------------------------------------------------------------
+globals:
+  # Hold-off window to suppress UI flicker after switch actions
+  - id: pump_holdoff_until
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+  - id: pump_commanded
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  # Last valid speed setpoint — persisted across reboots
+  - id: last_setpoint
+    type: int
+    restore_value: yes
+    initial_value: '80'
+
+# -----------------------------------------------------------------------------
+# SENSORS — read-only registers
+# -----------------------------------------------------------------------------
+sensor:
+  # ── 0x07D1 (2001) — Error code bitmask ────────────────────────────────────
+  # Reading this register also acts as the RS-485 wake-up ping.
+  - platform: modbus_controller
+    modbus_controller_id: inverflow
+    id: pump_error_code_raw
+    name: "Error code raw"
+    address: 2001
+    register_type: holding
+    value_type: U_WORD
+    accuracy_decimals: 0
+    internal: true   # decoded by text_sensor below
+    entity_category: diagnostic
+
+  # ── 0x07D2 (2002) — Operation condition bitmask ───────────────────────────
+  - platform: modbus_controller
+    modbus_controller_id: inverflow
+    id: pump_op_condition_raw
+    name: "Op condition raw"
+    address: 2002
+    register_type: holding
+    value_type: U_WORD
+    accuracy_decimals: 0
+    internal: true   # used by binary_sensor and switch
+    entity_category: diagnostic
+
+  # ── 0x07D3 (2003) — Actual speed % ───────────────────────────────────────
+  - platform: modbus_controller
+    modbus_controller_id: inverflow
+    id: pump_speed_pct
+    name: "Speed"
+    address: 2003
+    register_type: holding
+    value_type: U_WORD
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    icon: mdi:pump
+    state_class: measurement
+
+  # ── 0x07D4 (2004) — Instant power W ──────────────────────────────────────
+  - platform: modbus_controller
+    modbus_controller_id: inverflow
+    id: pump_power_w
+    name: "Power"
+    address: 2004
+    register_type: holding
+    value_type: U_WORD
+    unit_of_measurement: "W"
+    accuracy_decimals: 0
+    device_class: power
+    state_class: measurement
+
+  # ── WiFi signal ───────────────────────────────────────────────────────────
+  - platform: wifi_signal
+    name: "WiFi signal"
+    update_interval: 60s
+    entity_category: diagnostic
+
+# -----------------------------------------------------------------------------
+# BINARY SENSOR — running state (op_condition bit 0)
+# -----------------------------------------------------------------------------
+binary_sensor:
+  - platform: template
+    id: pump_is_running
+    name: "Running"
+    device_class: running
+    lambda: |-
+      // Bit 0 of op_condition = pump running
+      return (uint16_t(id(pump_op_condition_raw).state) & 0x0001) != 0;
+
+# -----------------------------------------------------------------------------
+# TEXT SENSORS — decoded error + op_condition
+# -----------------------------------------------------------------------------
+text_sensor:
+  - platform: template
+    id: pump_error_text
+    name: "Error"
+    icon: mdi:alert-circle-outline
+    entity_category: diagnostic
+    lambda: |-
+      const uint16_t code = uint16_t(id(pump_error_code_raw).state);
+      if (code == 0) return std::string("No error");
+      std::string msg;
+      const char* bits[] = {
+        "DC voltage abnormal",
+        "AC current sampling failure",
+        "Phase-deficient protection",
+        "Master drive error",
+        "Heatsink sensor error",
+        "Heatsink overheat",
+        "Output current exceeds limit",
+        "Input voltage abnormal",
+        "No water protection",
+        "Panel-master comm failure",
+        "Panel EEPROM error",
+        "RTC read error",
+        "Main EEPROM error",
+        "Motor current detection error",
+        "Motor power overload",
+        "PFC protection"
+      };
+      for (int i = 0; i < 16; i++) {
+        if (code & (1 << i)) {
+          if (!msg.empty()) msg += "; ";
+          msg += bits[i];
+        }
+      }
+      return msg;
+
+  - platform: template
+    id: pump_op_condition_text
+    name: "Op condition"
+    entity_category: diagnostic
+    lambda: |-
+      char buf[8];
+      sprintf(buf, "0x%04X", uint16_t(id(pump_op_condition_raw).state));
+      return std::string(buf);
+
+  - platform: wifi_info
+    ip_address:
+      name: "IP address"
+      entity_category: diagnostic
+
+# -----------------------------------------------------------------------------
+# NUMBER — hidden Modbus writer for register 3001
+# Do not expose this directly — use pump_setpoint (template) instead
+# -----------------------------------------------------------------------------
+number:
+  - platform: modbus_controller
+    modbus_controller_id: inverflow
+    id: pump_setpoint_modbus
+    name: "Setpoint Modbus (internal)"
+    internal: true
+    address: 3001
+    register_type: holding
+    value_type: U_WORD
+    use_write_multiple: false
+    min_value: 0
+    max_value: 100
+    step: 5
+    write_lambda: |-
+      // Clamp and snap to 5% — minimum 30% when running, 0 = stop
+      if (x == 0) return (uint16_t) 0;
+      float v = x;
+      if (v < 30) v = 30;
+      if (v > 100) v = 100;
+      int snapped = (int(v) / 5) * 5;
+      if (snapped < 30) snapped = 30;
+      return (uint16_t) snapped;
+
+  # ── Visible slider — persisted setpoint ───────────────────────────────────
+  - platform: template
+    id: pump_setpoint
+    name: "Speed setpoint"
+    unit_of_measurement: "%"
+    min_value: 30
+    max_value: 100
+    step: 5
+    optimistic: true
+    restore_value: true
+    initial_value: 80
+    icon: mdi:speedometer
+    on_value:
+      then:
+        - lambda: |-
+            // Snap to 5% and clamp
+            int v = int(x / 5) * 5;
+            if (v < 30) v = 30;
+            if (v > 100) v = 100;
+            id(last_setpoint) = v;
+            // Apply immediately if pump is running
+            if (id(pump_is_running).state) {
+              id(pump_setpoint_modbus).make_call().set_value(v).perform();
+            }
+
+# -----------------------------------------------------------------------------
+# SWITCH — ON/OFF
+# ON  → write last setpoint to reg 3001
+# OFF → write 0 to reg 3001 (pump stops, setpoint preserved)
+# -----------------------------------------------------------------------------
+switch:
+  - platform: template
+    id: pool_pump_switch
+    name: "Power"
+    icon: mdi:pump
+    lambda: |-
+      // During hold-off, report last commanded state to avoid UI flicker
+      if (millis() < id(pump_holdoff_until)) {
+        return id(pump_commanded);
+      }
+      return id(pump_is_running).state;
+    turn_on_action:
+      - lambda: |-
+          id(pump_commanded) = true;
+          id(pump_holdoff_until) = millis() + 4000;
+      - switch.template.publish:
+          id: pool_pump_switch
+          state: true
+      - lambda: |-
+          int sp = id(last_setpoint);
+          if (sp < 30) sp = 30;
+          if (sp > 100) sp = 100;
+          sp = (sp / 5) * 5;
+          id(pump_setpoint_modbus).make_call().set_value(sp).perform();
+    turn_off_action:
+      - lambda: |-
+          id(pump_commanded) = false;
+          id(pump_holdoff_until) = millis() + 4000;
+      - switch.template.publish:
+          id: pool_pump_switch
+          state: false
+      - number.set:
+          id: pump_setpoint_modbus
+          value: 0
+
+# -----------------------------------------------------------------------------
+# BUTTON — manual RS-485 wake-up
+# Press if the pump stops responding after a power cut
+# -----------------------------------------------------------------------------
+button:
+  - platform: template
+    name: "Wake-up RS485"
+    icon: mdi:restart
+    on_press:
+      then:
+        - lambda: |-
+            ESP_LOGI("inverflow", "Manual RS-485 wake-up requested");
+        - modbus_controller.request_again:
+            id: inverflow
+        - delay: 500ms
+        - modbus_controller.request_again:
+            id: inverflow
+
+# -----------------------------------------------------------------------------
+# INTERVAL — periodic wake-up ping every 5 minutes
+# Reads register 0x07D1 to keep the RS-485 interface alive
+# -----------------------------------------------------------------------------
+interval:
+  - interval: 5min
+    then:
+      - lambda: |-
+          ESP_LOGD("inverflow", "Periodic wake-up ping");
+      - modbus_controller.request_again:
+          id: inverflow
