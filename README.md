@@ -14,7 +14,27 @@
 [![GH-release](https://img.shields.io/github/v/release/Elwinmage/ha-usr-modbus-bridge.svg?style=flat-square)](https://github.com/Elwinmage/ha-usr-modbus-bridge/releases)
 [![BuyMeCoffee](https://img.shields.io/badge/buy%20me%20a%20coffee-donate-yellow.svg?style=flat-square)](https://paypal.me/Elwinmage)
 
-Home Assistant custom integration for **USR serial-to-ethernet converters** (USR-TCP232-304, USR-TCP232-306, USR-N510) operating in transparent TCP mode, bridging RS-485 Modbus devices.
+---
+
+Home Assistant integration for **Modbus RS-485 pool pumps**, with two hardware approaches to connect your pump to Home Assistant — choose the one that fits your setup.
+
+---
+
+## Table of contents
+
+- [Supported devices](#supported-devices)
+- [Two ways to connect](#two-ways-to-connect)
+  - [Option A — USR TCP bridge](#option-a--usr-tcp-bridge-recommended-for-most-users)
+  - [Option B — ESP32 + MAX485](#option-b--esp32--max485-esphome)
+  - [Comparison](#comparison)
+- [InverFlow Eco — Modbus register map](#inverflow-eco--modbus-register-map)
+- [HA integration setup (Option A)](#ha-integration-setup-option-a)
+- [ESPHome setup (Option B)](#esphome-setup-option-b)
+- [Entities](#entities)
+- [Resilience & wake-up mechanism](#resilience--wake-up-mechanism)
+- [Adding new devices](#adding-new-devices)
+- [Troubleshooting](#troubleshooting)
+- [Related projects](#related-projects)
 
 ---
 
@@ -28,127 +48,68 @@ Home Assistant custom integration for **USR serial-to-ethernet converters** (USR
 
 ---
 
-## Hardware setup
+## Two ways to connect
+
+Both options give you the same Home Assistant entities and the same local, cloud-free control. The difference is in the hardware between your pump and Home Assistant.
+
+### Option A — USR TCP bridge *(recommended for most users)*
+
+A **USR-TCP232-304** (or compatible) converter sits on the RS-485 bus and bridges it to your home network over TCP. The HA integration connects to it directly — no additional hardware required beyond the converter.
 
 ```
 Home Assistant
      │
-     │ TCP
+     │ TCP  (LAN)
      ▼
-USR-TCP232-304          ← transparent TCP→RS485 bridge
-192.168.0.x : 8899
+USR-TCP232-304
+192.168.0.x:8899
 9600 baud / 8N1
      │
-     │ RS-485 (PIN6=A+  PIN7=B-)
+     │ RS-485
      ▼
-InverFlow Eco pump
-Modbus addr 170 (0xAA)
+InverFlow Eco
+addr 170 (0xAA)
 ```
 
-### USR converter wiring
-
-| InverFlow connector | USR terminal |
-|---------------------|-------------|
-| PIN 6 (RS485 A / DATA+) | A+ |
-| PIN 7 (RS485 B / DATA−) | B− |
-| PIN 5 (GND) | GND (optional) |
-
-### USR-TCP232-304 configuration
-
-| Parameter | Value |
-|-----------|-------|
-| Work Mode | **TCP Server** |
-| Local Port | 8899 |
-| Baud Rate | 9600 |
-| Data Size | 8 bit |
-| Parity | None |
-| Stop Bits | 1 |
-| Similar RFC2217 | **❌ OFF** |
-| TCP Server-kick off old connection | **❌ OFF** |
-| Modbus Type | None |
-| Buffer Data Before Connected | ❌ OFF |
-
-> ⚠️ **RFC2217 must be disabled.** When enabled, the USR receives TCP data but does not forward it to RS-485 (TX stays at 0 bytes).
+**Pros:** simple setup, no firmware to maintain, one device for multiple pumps on the same bus.
+**Cons:** requires a separate Ethernet/WiFi device on the network.
 
 ---
 
-## Installation
+### Option B — ESP32 + MAX485 *(ESPHome)*
 
-### HACS (recommended)
+An **ESP32** with a cheap **MAX485 TTL module** connects directly to the pump RS-485 bus over GPIO. ESPHome handles the Modbus protocol and exposes entities to Home Assistant via the native API.
 
-1. In HACS → Integrations → ⋮ → Custom repositories
-2. Add `https://github.com/Elwinmage/ha-usr-modbus-bridge` as **Integration**
-3. Install **USR Modbus Bridge**
-4. Restart Home Assistant
+```
+Home Assistant
+     │
+     │ ESPHome native API  (WiFi)
+     ▼
+ESP32 + MAX485 module
+GPIO14=TX  GPIO15=RX  GPIO23=DE/RE
+     │
+     │ RS-485
+     ▼
+InverFlow Eco
+addr 170 (0xAA)
+```
 
-### Manual
-
-Copy `custom_components/usr_modbus_bridge/` into your HA `custom_components/` folder and restart.
-
----
-
-## Configuration
-
-1. **Settings → Devices & Services → Add Integration**
-2. Search for **USR Modbus Bridge**
-
-### Step 1 — Gateway
-
-| Field | Description |
-|-------|-------------|
-| Gateway model | USR-TCP232-304 / USR-TCP232-306 / USR-N510 / Other |
-| IP address | IP of the USR converter |
-| TCP port | Default: 8899 |
-| Baud rate | Must match converter setting (default: 9600) |
-| Data bits | 8 |
-| Parity | None |
-| Stop bits | 1 |
-
-### Step 2 — Device
-
-| Field | Description |
-|-------|-------------|
-| Device type | Select from supported device profiles |
-| Modbus address | Decimal — InverFlow default: **170** |
-| Friendly name | Name shown in HA |
-| Poll interval | How often to read registers (2–300 s, default 10 s) |
-
-### Options (post-setup)
-
-Click **Configure** on the integration entry to change baud rate, bus parameters, and poll interval without re-adding the integration. Changes trigger an automatic reload.
+**Pros:** ~5€ total hardware cost, no extra device on the network, fully local.
+**Cons:** one ESP32 per RS-485 bus segment, requires flashing ESPHome firmware.
 
 ---
 
-## Entities
+### Comparison
 
-### InverFlow Eco
-
-| Entity | Type | Description |
-|--------|------|-------------|
-| `switch.*_power` | Switch | Turn pump ON (restores last speed) / OFF (setpoint=0) |
-| `sensor.*_speed` | Sensor | Actual running speed % |
-| `sensor.*_power` | Sensor | Instant power consumption W |
-| `number.*_speed_setpoint` | Number | Target speed slider 0–100% |
-| `button.*_restart_connection` | Button | Force TCP reconnect + wake-up ping |
-| `sensor.*_error` | Sensor (diag) | Decoded error text from register 2001 |
-| `sensor.*_firmware_const_*` | Sensor (diag) | Raw firmware constants (hidden by default) |
-
-> Diagnostic entities are hidden by default. Enable them via **Entity → Settings → Visible**.
-
----
-
-## Resilience
-
-The integration handles several failure modes automatically:
-
-| Situation | Behaviour |
-|-----------|-----------|
-| Pump RS-485 asleep after power cut | **Wake-up ping** sent at startup and after every reconnect (single read of register 0x07D1) |
-| All registers return ERR for 3 consecutive polls | Automatic TCP reconnect + wake-up |
-| No valid data received for 5 minutes | Automatic TCP reconnect + wake-up |
-| Manual recovery needed | Press the **Restart connection** button |
-
-> ⚠️ The USR converter only accepts **one TCP client at a time**. Do not run diagnostic scripts (socat, Python monitor) while the HA integration is active.
+| | Option A — USR TCP bridge | Option B — ESP32 + MAX485 |
+|---|---|---|
+| **Hardware cost** | ~25-40€ | ~5-10€ |
+| **Setup complexity** | Low — web UI config | Medium — ESPHome flash |
+| **Multiple devices on same bus** | ✅ Yes | ⚠️ One bus per ESP32 |
+| **Firmware to maintain** | ❌ None | ✅ ESPHome OTA |
+| **HA integration** | Custom component (this repo) | ESPHome native API |
+| **Network dependency** | TCP over LAN | WiFi |
+| **Wake-up mechanism** | Automatic (coordinator) | Boot + 5min interval + button |
 
 ---
 
@@ -156,25 +117,25 @@ The integration handles several failure modes automatically:
 
 > Confirmed by RS-485 capture session and Tuya/Modbus correlation (2026-05-08).
 
-### Read registers (FC=03, device address 0xAA)
+### Read registers (FC=03, device address 0xAA / 170)
 
 | Register (hex) | Register (dec) | Key | Description | Notes |
 |----------------|----------------|-----|-------------|-------|
-| 0x07D1 | 2001 | `error_code` | Error bitmask | 0 = no error. Also used as wake-up register |
+| 0x07D1 | 2001 | `error_code` | Error bitmask | 0=no error — also the **wake-up register** |
 | 0x07D2 | 2002 | `op_condition` | Operation condition bitmask | bit0=1 → running |
 | 0x07D3 | 2003 | `speed_pct` | Running capacity % | Actual speed, not setpoint |
 | 0x07D4 | 2004 | `power_w` | Instant power W | Confirmed vs Tuya DPS 5 |
-| 0x07D7 | 2007 | `const_2007` | Firmware constant | Fixed value, meaning unknown |
-| 0x07D8 | 2008 | `const_2008` | Firmware constant | Fixed value, meaning unknown |
-| 0x07D9 | 2009 | `const_2009` | Firmware constant | Fixed value, meaning unknown |
+| 0x07D7 | 2007 | `const_2007` | Firmware constant (~88) | Fixed value, meaning unknown |
+| 0x07D8 | 2008 | `const_2008` | Firmware constant (~20) | Fixed value, meaning unknown |
+| 0x07D9 | 2009 | `const_2009` | Firmware constant (~28) | Fixed value, meaning unknown |
 
 ### Write register (FC=06)
 
 | Register (hex) | Register (dec) | Description | Range |
 |----------------|----------------|-------------|-------|
-| 0x0BB9 | 3001 | Speed setpoint % | 0 = stop, 30–100 = run |
+| 0x0BB9 | 3001 | Speed setpoint % | 0=stop, 30–100=run |
 
-> Speed is automatically snapped to the nearest 5% and clamped to 30% minimum when running.
+> Speed is snapped to the nearest 5% and clamped to 30% minimum when running.
 
 ### Error bitmask (register 2001)
 
@@ -199,16 +160,145 @@ The integration handles several failure modes automatically:
 
 ### ON/OFF strategy
 
-The InverFlow Eco has **no dedicated ON/OFF Modbus register**. The integration implements it via the setpoint:
+The InverFlow Eco has **no dedicated ON/OFF Modbus register**:
 
-- `turn_off` → write 0 to register 0x0BB9
-- `turn_on` → write last known speed (default 80%) to register 0x0BB9
+- `turn_off` → write **0** to register 0x0BB9
+- `turn_on` → write **last known speed** (default 80%) to register 0x0BB9
 
-The `switch` entity reads `op_condition` bit 0 for the actual running state.
+Running state is determined by reading `op_condition` bit 0.
 
 ### Wake-up behaviour
 
-After a power cut or extended RS-485 silence, the pump stops responding to Modbus. A single FC=03 read on register **0x07D1** (error code) re-activates the RS-485 interface. This is sent automatically at startup and after every TCP reconnect.
+After a power cut or extended RS-485 silence, the pump stops responding. A single FC=03 read on register **0x07D1** re-activates the RS-485 interface. Both solutions implement this automatically.
+
+---
+
+## HA integration setup (Option A)
+
+### USR converter configuration
+
+| Parameter | Value |
+|-----------|-------|
+| Work Mode | **TCP Server** |
+| Local Port | 8899 |
+| Baud Rate | 9600 |
+| Data Size | 8 bit |
+| Parity | None |
+| Stop Bits | 1 |
+| **Similar RFC2217** | **❌ OFF** (critical — TX stays 0 if enabled) |
+| **TCP Server-kick off old connection** | **❌ OFF** |
+| Modbus Type | None |
+
+### Wiring
+
+| InverFlow connector | USR terminal |
+|---------------------|-------------|
+| PIN 6 (RS485 A / DATA+) | A+ |
+| PIN 7 (RS485 B / DATA−) | B− |
+| PIN 5 (GND) | GND (optional) |
+
+### Installation
+
+#### HACS (recommended)
+1. HACS → Integrations → ⋮ → Custom repositories
+2. Add `https://github.com/Elwinmage/ha-usr-modbus-bridge` as **Integration**
+3. Install **USR Modbus Bridge** → Restart HA
+
+#### Manual
+Copy `custom_components/usr_modbus_bridge/` into your HA `custom_components/` folder and restart.
+
+### Configuration
+
+**Settings → Devices & Services → Add Integration → USR Modbus Bridge**
+
+**Step 1 — Gateway**
+
+| Field | Description |
+|-------|-------------|
+| Gateway model | USR-TCP232-304 / USR-TCP232-306 / USR-N510 / Other |
+| IP address | IP of the USR converter |
+| TCP port | Default: 8899 |
+| Baud rate | 9600 |
+| Data bits / Parity / Stop bits | 8 / None / 1 |
+
+**Step 2 — Device**
+
+| Field | Description |
+|-------|-------------|
+| Device type | InverFlow Eco |
+| Modbus address | **170** (shown in pump menu) |
+| Friendly name | e.g. "Pool pump" |
+| Poll interval | 2–300 s (default 10 s) |
+
+**Options (post-setup):** click **Configure** to change baud rate, bus parameters, or poll interval without re-adding the integration.
+
+---
+
+## ESPHome setup (Option B)
+
+### Hardware
+
+<p align="center">
+  <img src="doc/img/max485_module.png" alt="MAX485 module" width="500"/>
+</p>
+
+| Component | Notes |
+|-----------|-------|
+| ESP32 dev board | Any ESP32 board |
+| MAX485 module | C25B or equivalent (~2€) |
+
+### Wiring
+
+```
+ESP32 GPIO14 (TX) ──→ MAX485 DI
+ESP32 GPIO15 (RX) ←── MAX485 RO
+ESP32 GPIO23      ──→ MAX485 RE  ┐ tie together
+ESP32 GPIO23      ──→ MAX485 DE  ┘
+MAX485 VCC        ←── 5V
+MAX485 GND        ──── GND
+MAX485 A (DATA+)  ──── InverFlow PIN 6
+MAX485 B (DATA−)  ──── InverFlow PIN 7
+```
+
+> RE and DE are tied together on the module — GPIO23 HIGH = transmit, LOW = receive.
+
+### Configuration
+
+Full YAML: [`doc/inverflow_esphome.yaml`](doc/inverflow_esphome.yaml)
+
+```bash
+# Flash
+esphome run doc/inverflow_esphome.yaml
+```
+
+---
+
+## Entities
+
+Both options expose equivalent entities:
+
+| Entity | Type | Description |
+|--------|------|-------------|
+| Power | Switch | ON (restores last speed) / OFF (setpoint=0) |
+| Speed | Sensor | Actual running speed % |
+| Power | Sensor | Instant power consumption W |
+| Speed setpoint | Number | Target speed slider |
+| Restart / Wake-up | Button | Force reconnect + RS-485 wake-up |
+| Error | Text sensor (diag) | Decoded error bitmask from reg 2001 |
+| Firmware constants | Sensors (diag) | Raw firmware constants, hidden by default |
+
+---
+
+## Resilience & wake-up mechanism
+
+| Situation | Option A (HA integration) | Option B (ESPHome) |
+|-----------|--------------------------|-------------------|
+| Pump asleep after power cut | Wake-up ping at startup + after every reconnect | Wake-up ping at boot |
+| All registers ERR × 3 polls | Auto TCP reconnect + wake-up | ESPHome Modbus retry |
+| No valid data for 5 min | Auto TCP reconnect + wake-up | Periodic wake-up every 5 min |
+| Manual recovery | **Restart connection** button | **Wake-up RS485** button |
+
+> ⚠️ Only **one TCP client** can connect to the USR converter at a time. Never run diagnostic scripts (socat, Python monitor) while the HA integration is active.
 
 ---
 
@@ -217,10 +307,9 @@ After a power cut or extended RS-485 silence, the pump stops responding to Modbu
 1. Create `custom_components/usr_modbus_bridge/bridge/devices/mydevice.py`
 2. Subclass `ModbusDevice` from `bridge/devices/base.py`
 3. Declare `READ_REGISTERS`, implement `set_speed()`, set `WAKE_UP_REGISTER` if needed
-4. Register the class in `const.py → DEVICE_PROFILES`
+4. Register in `const.py → DEVICE_PROFILES`
 
 ```python
-# Example skeleton
 from .base import ModbusDevice, RegisterDef
 
 class MyDevice(ModbusDevice):
@@ -239,6 +328,7 @@ class MyDevice(ModbusDevice):
 
     @property
     def sensor_keys(self): return ["speed", "power"]
+
     @property
     def switch_key(self): return "speed"
 ```
@@ -247,112 +337,30 @@ class MyDevice(ModbusDevice):
 
 ## Troubleshooting
 
-### Pump does not respond after power cut
-Press the **Restart connection** button. The wake-up ping will re-activate the RS-485 interface.
+**Pump does not respond after power cut**
+→ Press **Restart connection** (Option A) or **Wake-up RS485** (Option B). The wake-up ping re-activates the RS-485 interface.
 
-### TX counter stays at 0 on USR web interface
-- Disable **Similar RFC2217** in the USR web interface → Save → power cycle the USR
-- Disable **TCP Server-kick off old connection**
+**TX counter stays at 0 on USR web interface**
+→ Disable **Similar RFC2217** in the USR web UI → Save → power cycle the USR physically.
 
-### All entities show unavailable
-- Check that no other client (socat, Python script) is connected to port 8899
-- Verify the USR is reachable: `nc -zv <USR_IP> 8899`
-- Check HA logs for connection errors
+**All entities show unavailable**
+→ Verify no other client (socat, Python script) is connected to port 8899. Check HA logs for connection errors.
 
-### Integration does not find the device during setup
-- Confirm the Modbus address in the pump menu (InverFlow Eco default: **170**)
-- Ensure the pump is powered on and the RS-485 bus is wired correctly (PIN6=A+, PIN7=B−)
+**Integration does not find the device during setup**
+→ Confirm Modbus address in pump menu (InverFlow Eco default: **170**). Ensure pump is powered and PIN6/PIN7 wired correctly.
+
+**ESPHome: pump not responding after ESP32 reboot**
+→ The boot wake-up ping handles this automatically. If it persists, press the **Wake-up RS485** button in HA.
 
 ---
 
 ## Related projects
 
 - [ha-usr-r16-component](https://github.com/Elwinmage/ha-usr-r16-component) — USR-R16 relay controller integration
-- [ESPHome InverFlow config](https://forums.whirlpool.net.au/archive/3kpyw2n7) — community ESPHome YAML for the same pump
+- [ESPHome InverFlow community config](https://forums.whirlpool.net.au/archive/3kpyw2n7) — original ESPHome YAML inspiration
 
 ---
 
 ## License
 
 MIT
-
----
-
-## ESPHome alternative
-
-If you prefer a direct ESP32 solution instead of the USR TCP bridge, you can use an ESP32 with a MAX485 module connected directly to the pump RS-485 bus.
-
-### Hardware
-
-<p align="center">
-  <img src="doc/img/max485_module.png" alt="MAX485 module" width="500"/>
-</p>
-
-| Component | Example |
-|-----------|---------|
-| ESP32 dev board | ESP32-DevKitC or any ESP32 board |
-| RS-485 transceiver | MAX485 module (C25B or equivalent) |
-
-### Wiring
-
-```
-ESP32 GPIO14 (TX) ──→ MAX485 DI
-ESP32 GPIO15 (RX) ←── MAX485 RO
-ESP32 GPIO23      ──→ MAX485 RE  ┐ tie together
-ESP32 GPIO23      ──→ MAX485 DE  ┘ (direction control)
-MAX485 VCC        ←── 5V
-MAX485 GND        ──── GND
-MAX485 A (DATA+)  ──── InverFlow connector PIN 6
-MAX485 B (DATA−)  ──── InverFlow connector PIN 7
-```
-
-> ⚠️ **RE and DE must be tied together** on the MAX485 module. When the ESP32 drives GPIO23 HIGH, the module transmits. When LOW, it receives.
-
-### ESPHome configuration
-
-The full YAML is available in [`doc/inverflow_esphome.yaml`](doc/inverflow_esphome.yaml).
-
-Key features of the config:
-
-- **Wake-up ping** at boot: reads register `0x07D1` to re-activate the pump RS-485 interface after power loss
-- **Periodic wake-up** every 5 minutes via `interval:` to keep the bus alive
-- **Manual wake-up button** in HA in case the pump stops responding
-- **Speed setpoint** snapped to nearest 5%, minimum 30% when running
-- **ON/OFF switch** — ON restores last speed, OFF writes 0 to setpoint
-- **Hold-off** on switch to prevent UI flicker during Modbus write/read latency
-- **Error decoder** — converts register 2001 bitmask to human-readable text
-- **Setpoint persisted** across ESP32 reboots via `restore_value: true`
-
-### Quick start
-
-```bash
-# Install ESPHome
-pip install esphome
-
-# Create secrets.yaml with your credentials
-cat > secrets.yaml << 'SECRETS'
-wifi_ssid: "YourSSID"
-wifi_password: "YourPassword"
-api_key: "your_32_byte_base64_api_key"
-ota_password: "your_ota_password"
-ap_password: "fallback_ap_password"
-inverflow_ip: "192.168.0.x"
-gateway: "192.168.0.1"
-subnet: "255.255.255.0"
-SECRETS
-
-# Flash the ESP32
-esphome run doc/inverflow_esphome.yaml
-```
-
-### Entities created by ESPHome
-
-| Entity | Type | Description |
-|--------|------|-------------|
-| `switch.*_power` | Switch | ON/OFF (setpoint 0 / last speed) |
-| `number.*_speed_setpoint` | Number | Target speed slider 30-100% step 5% |
-| `sensor.*_speed` | Sensor | Actual running speed % |
-| `sensor.*_power` | Sensor | Instant power W |
-| `binary_sensor.*_running` | Binary sensor | Running state (op_condition bit 0) |
-| `text_sensor.*_error` | Text sensor | Decoded error from register 2001 |
-| `button.*_wake_up_rs485` | Button | Manual RS-485 wake-up ping |
