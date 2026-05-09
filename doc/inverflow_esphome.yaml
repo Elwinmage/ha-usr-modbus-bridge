@@ -34,13 +34,13 @@ esphome:
   on_boot:
     priority: -200  # run after all components are initialised
     then:
+      # Wake-up ping: write current setpoint to register 3001 to trigger a
+      # Modbus transaction and re-activate the RS-485 interface.
+      # ESPHome has no modbus_controller.request_again — we use a write instead.
+      - delay: 2s   # let Modbus controller finish initialising
       - lambda: |-
-          // Wake-up ping: read register 0x07D1 to re-activate the RS-485 interface
-          // after power loss or extended silence on the bus.
-          ESP_LOGI("inverflow", "Sending RS-485 wake-up ping (reg 0x07D1)...");
-      - modbus_controller.request_again:
-          id: inverflow
-      - delay: 1s
+          ESP_LOGI("inverflow", "Boot wake-up: writing setpoint to wake RS-485");
+          id(pump_setpoint_modbus).make_call().set_value(id(last_setpoint)).perform();
 
 esp32:
   board: esp32dev
@@ -353,12 +353,13 @@ button:
     on_press:
       then:
         - lambda: |-
+            // Wake-up: write current setpoint twice to trigger two Modbus
+            // transactions and re-activate the RS-485 interface.
             ESP_LOGI("inverflow", "Manual RS-485 wake-up requested");
-        - modbus_controller.request_again:
-            id: inverflow
+            id(pump_setpoint_modbus).make_call().set_value(id(last_setpoint)).perform();
         - delay: 500ms
-        - modbus_controller.request_again:
-            id: inverflow
+        - lambda: |-
+            id(pump_setpoint_modbus).make_call().set_value(id(last_setpoint)).perform();
 
 # -----------------------------------------------------------------------------
 # INTERVAL — periodic wake-up ping every 5 minutes
@@ -368,6 +369,7 @@ interval:
   - interval: 5min
     then:
       - lambda: |-
-          ESP_LOGD("inverflow", "Periodic wake-up ping");
-      - modbus_controller.request_again:
-          id: inverflow
+          // Periodic keep-alive: write current setpoint to keep the RS-485
+          // interface active and prevent the pump from going silent.
+          ESP_LOGD("inverflow", "Periodic RS-485 keep-alive");
+          id(pump_setpoint_modbus).make_call().set_value(id(last_setpoint)).perform();
