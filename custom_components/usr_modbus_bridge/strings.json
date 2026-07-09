@@ -5,16 +5,29 @@
         "title": "USR Modbus Bridge — Gateway",
         "description": "Configure the USR serial-to-ethernet converter",
         "data": {
-          "gateway_model": "Gateway model", "host": "IP address", "port": "TCP port",
-          "baud": "Baud rate", "byte_size": "Data bits", "parity": "Parity", "stop_bits": "Stop bits"
+          "gateway_model": "Gateway model",
+          "host": "IP address",
+          "port": "TCP port",
+          "baud": "Baud rate",
+          "byte_size": "Data bits",
+          "parity": "Parity",
+          "stop_bits": "Stop bits"
         }
       },
       "device": {
-        "title": "USR Modbus Bridge — Device",
-        "description": "Configure the Modbus device on the RS-485 bus",
+        "title": "Device type",
+        "description": "Choose the device connected to this gateway.",
         "data": {
-          "device_key": "Device type", "device_address": "Modbus address (1–254)",
-          "name": "Friendly name", "scan_interval": "Poll interval (seconds)"
+          "device_key": "Device type",
+          "name": "Name"
+        }
+      },
+      "poller": {
+        "title": "Modbus device",
+        "description": "Modbus address and poll interval.",
+        "data": {
+          "device_address": "Modbus address",
+          "scan_interval": "Poll interval (seconds)"
         }
       }
     },
@@ -23,7 +36,9 @@
       "device_not_found": "Device did not respond — check Modbus address and wiring",
       "unknown": "Unexpected error, check logs"
     },
-    "abort": { "already_configured": "This device is already configured" }
+    "abort": {
+      "already_configured": "This device is already configured"
+    }
   },
   "options": {
     "step": {
@@ -31,20 +46,48 @@
         "title": "USR Modbus Bridge — Options",
         "description": "Modify bus parameters and poll interval. The integration will reload automatically.",
         "data": {
-          "scan_interval": "Poll interval (seconds)", "baud": "Baud rate",
-          "byte_size": "Data bits", "parity": "Parity", "stop_bits": "Stop bits"
+          "scan_interval": "Poll interval (seconds)",
+          "baud": "Baud rate",
+          "byte_size": "Data bits",
+          "parity": "Parity",
+          "stop_bits": "Stop bits",
+          "reply_delay": "Reply hold-off (ms) — delay before answering a poll; the touch panel answers at ~77 ms"
         }
       }
     }
   },
   "entity": {
-    "button": { "restart_connection": { "name": "Restart connection" } },
-    "switch": { "power": { "name": "Power" } },
-    "number": { "speed_setpoint": { "name": "Speed setpoint" } },
+    "button": {
+      "restart_connection": {
+        "name": "Restart connection"
+      }
+    },
+    "switch": {
+      "power": {
+        "name": "Power"
+      }
+    },
+    "number": {
+      "speed_setpoint": {
+        "name": "Speed setpoint"
+      }
+    },
     "sensor": {
-      "speed_pct": { "name": "Speed" }, "power_w": { "name": "Power" },
-      "temp_c": { "name": "Motor temperature" }, "energy_day": { "name": "Energy today" },
-      "energy_total": { "name": "Energy total" }
+      "speed_pct": {
+        "name": "Speed"
+      },
+      "power_w": {
+        "name": "Power"
+      },
+      "temp_c": {
+        "name": "Motor temperature"
+      },
+      "energy_day": {
+        "name": "Energy today"
+      },
+      "energy_total": {
+        "name": "Energy total"
+      }
     }
   }
 }
