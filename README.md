@@ -16,7 +16,7 @@
 
 ---
 
-Home Assistant integration for **Modbus RS-485 pool pumps**, with two hardware approaches to connect your pump to Home Assistant — choose the one that fits your setup.
+Home Assistant integration for **RS-485 pool equipment** — variable-speed pool pumps (Modbus master mode) and Hayward / Silverline **inverter heat pumps** (touch-panel listener mode) — with two hardware approaches to connect them to Home Assistant.
 
 ---
 
@@ -28,6 +28,7 @@ Home Assistant integration for **Modbus RS-485 pool pumps**, with two hardware a
   - [Option B — ESP32 + MAX485](#option-b--esp32--max485-esphome)
   - [Comparison](#comparison)
 - [InverFlow Eco — Modbus register map](#inverflow-eco--modbus-register-map)
+- [Hayward pool heat pump](#hayward-pool-heat-pump)
 - [HA integration setup (Option A)](#ha-integration-setup-option-a)
 - [ESPHome setup (Option B)](#esphome-setup-option-b)
 - [Entities](#entities)
@@ -40,11 +41,14 @@ Home Assistant integration for **Modbus RS-485 pool pumps**, with two hardware a
 
 ## Supported devices
 
-| Device | Manufacturer | Protocol | Baud | Address | Status |
-|--------|-------------|----------|------|---------|--------|
-| InverFlow Eco | Madimack / Aquagem | Modbus RTU 8N1 | 9600 | 0xAA (170) | ✅ Fully supported |
+| Device | Manufacturer | Protocol | Baud | Address | Mode | Status |
+|--------|-------------|----------|------|---------|------|--------|
+| InverFlow Eco | Madimack / Aquagem | Modbus RTU 8N1 | 9600 | 0xAA (170) | Polled (we are master) | ✅ Fully supported |
+| Pool heat pump | Hayward / Silverline | Touch-panel RTU 8N1 | 9600 | 0x02 (fixed) | Listener (pump is master) | ✅ Sensors + `climate` |
 
 > The InverFlow Eco is an OEM version of the Aquagem InverPro pool pump. All variants sharing the same controller (Madimack, Aquagem, Fairland INVERX, etc.) should be compatible.
+>
+> The **Hayward pool heat pump** support targets recent Hayward / Silverline inverter units whose Wi-Fi dongle speaks the Modbus-framed *touch-panel* protocol. On this bus **the pump is the master** and the integration emulates the Wi-Fi module (address `0x02`), so it runs a persistent *listener* instead of polling. It exposes a full **`climate`** entity (on/off, heat/cool/auto, setpoint) plus temperature / current / fan sensors. It is **not** for the older single-wire PC1000/PC1001 controllers.
 
 ---
 
@@ -96,6 +100,8 @@ addr 170 (0xAA)
 
 **Pros:** ~5€ total hardware cost, no extra device on the network, fully local.
 **Cons:** one ESP32 per RS-485 bus segment, requires flashing ESPHome firmware.
+
+> The ESP32 wiring below is for the **InverFlow** pump. For the **Hayward heat pump** on an ESP32, use the dedicated repo [ha-esphome-hayward](https://github.com/Elwinmage/ha-esphome-hayward) (auto-direction transceiver, `climate` entity included).
 
 ---
 
@@ -170,6 +176,60 @@ Running state is determined by reading `op_condition` bit 0.
 ### Wake-up behaviour
 
 After a power cut or extended RS-485 silence, the pump stops responding. A single FC=03 read on register **0x07D1** re-activates the RS-485 interface. Both solutions implement this automatically.
+
+---
+
+## Hayward pool heat pump
+
+Unlike the InverFlow (which the integration *polls* as a Modbus slave), the
+Hayward heat-pump control board is itself the **master**: it broadcasts its
+sensor block and polls each peripheral. The integration therefore emulates the
+**Wi-Fi module** on the bus:
+
+- it keeps a persistent connection to the USR gateway and answers the board's
+  status polls with the correct device identity (`reg 3009 = 0x0102`) and a
+  small reply hold-off (~60 ms, like the real touch panel);
+- it mirrors the pump's settings and, to apply a change, raises a flag, serves
+  the edited settings block when the board reads it back, then the board
+  commits.
+
+### Connection (USR gateway)
+
+Same USR-TCP232 wiring and web-UI settings as the InverFlow (TCP Server, 9600
+8N1, RFC2217 **off**). Wire the pump's RS-485 **A/B/GND** to the USR `A+/B-/GND`.
+
+### Setup in Home Assistant
+
+**Settings → Devices & Services → Add Integration → USR Modbus Bridge**
+
+1. **Gateway** step: IP / port / 9600 / 8N1 (as for any device).
+2. **Device type** step: choose **Hayward pool heat pump**, give it a name.
+   The Modbus **address is fixed to `0x02`** and is *not* asked (it is structural
+   for the Wi-Fi slot).
+3. Done. Within a few seconds the settings blocks are pulled (auto-refresh) and
+   the **climate** entity + sensors become available.
+
+**Options (post-setup):** click **Configure** to tune the **reply hold-off**
+(ms) if a command is ever not picked up (50–90 ms is the useful range).
+
+### Hayward entities
+
+| Entity | Type | Description |
+|--------|------|-------------|
+| Heat pump | `climate` | on/off, heat / cool / auto, target temperature, current temp (water inlet), heating/cooling action |
+| Water inlet / outlet | Sensor | Loop temperatures |
+| Suction / Coil / Ambient / Exhaust | Sensor | Circuit temperatures |
+| Compressor current | Sensor | A |
+| AC voltage | Sensor | V |
+| Fan speed | Sensor | rpm |
+| Per-mode setpoint memory (cool/heat/auto) | Sensor (diag) | Memorised setpoints from block 1091 |
+
+### ESP32 alternative for the heat pump
+
+Prefer a direct ESP32 on the bus instead of a USR gateway? A dedicated ESPHome
+external component provides the same `climate` entity + sensors, standalone:
+**[ha-esphome-hayward](https://github.com/Elwinmage/ha-esphome-hayward)**. Use
+an **auto-direction** RS-485 transceiver (e.g. MAX13487E) — no DE pin needed.
 
 ---
 
