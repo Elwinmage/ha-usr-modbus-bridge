@@ -29,6 +29,14 @@
           "device_address": "Modbus address",
           "scan_interval": "Poll interval (seconds)"
         }
+      },
+      "emec": {
+        "title": "EMEC controller",
+        "description": "RS-485 slave address (1-99) and poll interval.",
+        "data": {
+          "device_address": "RS-485 slave address",
+          "scan_interval": "Poll interval (seconds)"
+        }
       }
     },
     "error": {

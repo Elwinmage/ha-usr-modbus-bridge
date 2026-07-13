@@ -16,7 +16,9 @@
 
 ---
 
-Home Assistant integration for **RS-485 pool equipment** — variable-speed pool pumps (Modbus master mode) and Hayward / Silverline **inverter heat pumps** (touch-panel listener mode) — with two hardware approaches to connect them to Home Assistant.
+Home Assistant integration for **RS-485 pool equipment** — variable-speed pool pumps (Modbus master mode), Hayward / Silverline **inverter heat pumps** (touch-panel listener mode), and EMEC **pH/Redox pool controllers** (ERMES-family ASCII protocol, full read + write) — with two hardware approaches to connect them to Home Assistant.
+
+> ⚠️ The EMEC WDPHRH must be on its own physical RS-485 bus (own USR-TCP232 gateway + own MAX485/MAX13487E), because its 500 ms heartbeat traffic and 38400 baud rate are incompatible with sharing a Modbus RTU bus. See [EMEC WDPHRH controller](#emec-wdphrh-controller) below.
 
 ---
 
@@ -29,6 +31,7 @@ Home Assistant integration for **RS-485 pool equipment** — variable-speed pool
   - [Comparison](#comparison)
 - [InverFlow Eco — Modbus register map](#inverflow-eco--modbus-register-map)
 - [Hayward pool heat pump](#hayward-pool-heat-pump)
+- [EMEC WDPHRH controller](#emec-wdphrh-controller)
 - [HA integration setup (Option A)](#ha-integration-setup-option-a)
 - [ESPHome setup (Option B)](#esphome-setup-option-b)
 - [Entities](#entities)
@@ -45,6 +48,7 @@ Home Assistant integration for **RS-485 pool equipment** — variable-speed pool
 |--------|-------------|----------|------|---------|------|--------|
 | InverFlow Eco | Madimack / Aquagem | Modbus RTU 8N1 | 9600 | 0xAA (170) | Polled (we are master) | ✅ Fully supported |
 | Pool heat pump | Hayward / Silverline | Touch-panel RTU 8N1 | 9600 | 0x02 (fixed) | Listener (pump is master) | ✅ Sensors + `climate` |
+| WDPHRH pH/Redox controller | EMEC | ERMES-family ASCII 8N1 | 38400 | 01 (RS-485) | Polled with heartbeat | ✅ Full read + write (setpoints, modes, alarms, reset) |
 
 > The InverFlow Eco is an OEM version of the Aquagem InverPro pool pump. All variants sharing the same controller (Madimack, Aquagem, Fairland INVERX, etc.) should be compatible.
 >
@@ -230,6 +234,147 @@ Prefer a direct ESP32 on the bus instead of a USR gateway? A dedicated ESPHome
 external component provides the same `climate` entity + sensors, standalone:
 **[ha-esphome-hayward](https://github.com/Elwinmage/ha-esphome-hayward)**. Use
 an **auto-direction** RS-485 transceiver (e.g. MAX13487E) — no DE pin needed.
+
+---
+
+## EMEC WDPHRH controller
+
+Full read + write support for the **EMEC WDPHRH** pool water controller
+(pH + Redox regulation with proportional or ON/OFF dosing), reverse-engineered
+in 2026 by sniffing the BT ETH gateway module talking to the pump over RS-485
+and correlating every field with the Nimbus / MyEmec cloud UI.
+
+Unlike the Modbus devices, the WDPHRH speaks an **ASCII protocol from the
+ERMES family** with three quirks:
+
+- **Heartbeat every ~500 ms** (`34tb00 #0#\r\n`) or the pump goes silent
+- **Double-CR terminator** on commands (`3401<cmd>\r\r`) — a single `\r` is
+  interpreted as a malformed heartbeat and ignored
+- **Distinct framing** (ASCII fields separated by `#`, terminated by `\r`)
+  so it must live on its own bus, never mixed with Modbus RTU slaves
+
+Read reply and write ACK look like:
+
+```
+→ 3401setpntr\r\r
+← 34gpd01&WD#0770#0730#040#000#00#0#0630#0670#050#000#00#0#setpntrend\r
+
+→ 3401setpnw0760073004000000006300670050000000setpnwend\r\r
+← 34gpd01&setpnwokend\r
+```
+
+The **write payload is the read fields concatenated without `#` separators**,
+each field zero-padded to its known fixed width.
+
+### Hardware requirement — dedicated bus
+
+The 500 ms heartbeat traffic and the 38400 baud rate are incompatible with
+sharing a Modbus RTU bus (which requires ≥ 3.5-char inter-frame silence).
+Wire the WDPHRH on its **own** USR-TCP232 + **own** MAX13487E (or equivalent
+auto-direction transceiver). Terminate the bus with 120 Ω at each end.
+
+Pump RS-485 wiring (verified from the EMEC BT MODBUS documentation):
+- Pin 1: **A = RS-485+**
+- Pin 2: **B = RS-485−**
+
+### Nimbus enrolment — probably not required, not proven
+
+The pump was enrolled on [e-nimbus.com](https://www.e-nimbus.com) during the
+reverse-engineering sessions, so writes have only been tested with an active
+Nimbus session in the background. It is **not proven** that Nimbus enrolment
+is required for HA writes to work — the initial `#no#change` replies we got
+early on were most likely caused by wrong command names (we were trying
+`setpntw` and `changesp` before discovering that the real write is `setpnw`).
+
+If your unit is not enrolled and writes fail with `#no#change`, please open
+an issue — that would be the data point needed to actually pin the requirement
+down.
+
+> Note: `ermes-server.com` is being phased out; new BT ETH modules must be
+> enrolled on `e-nimbus.com` if you want the cloud UI.
+
+### Setup in Home Assistant
+
+**Settings → Devices & Services → Add Integration → USR Modbus Bridge**
+
+1. **Gateway** step: IP / port of the WDPHRH's USR / **38400** / 8N1.
+2. **Device type** step: choose **EMEC WDPHRH**, give it a name.
+3. **EMEC controller** step: RS-485 slave address (usually `1`) and poll
+   interval (10 s is a good default).
+
+The setup step probes with a `valuer` query and only creates the entry if the
+pump answers.
+
+### EMEC entities
+
+Everything is organised on the device page under three sections.
+
+**Main controls** — the live view and the acknowledge button:
+
+| Entity | Type | Description |
+|--------|------|-------------|
+| pH | Sensor | Live pH (device_class `ph`) |
+| Redox | Sensor | Live Redox in mV (device_class `voltage`) |
+| pH- reservoir empty | Binary sensor | Alarm bit `a1` |
+| Chlorine reservoir empty | Binary sensor | Alarm bit `a2` |
+| No flow | Binary sensor | Alarm bit `a3` |
+| Standby | Binary sensor | Alarm bit `a8` |
+| Reset alarms | Button | Sends `resalw` to clear latched alarms |
+
+**Configuration** — everything writable to the pump:
+
+| Entity | Type | Range / options | Writes via |
+|--------|------|-----------------|------------|
+| pH high / low setpoint | Number | 0.00 – 14.00, step 0.05 | `setpnw` |
+| pH high / low dose % | Number | 0 – 100 % | `setpnw` |
+| pH waiting time | Number | 0 – 99 min (used in ON/OFF mode) | `setpnw` |
+| pH working mode | Select | PROPORTIONAL / ON-OFF | `setpnw` |
+| Redox low / high setpoint | Number | 0 – 999 mV, step 5 | `setpnw` |
+| Redox low / high dose % | Number | 0 – 100 % | `setpnw` |
+| Redox waiting time | Number | 0 – 99 min | `setpnw` |
+| Redox working mode | Select | PROPORTIONAL / ON-OFF | `setpnw` |
+| Max strokes pH / Redox | Number | 1 – 180 P/m | `setskw` |
+| Passcode | Number | 4-digit | `paramw` |
+| Feeding delay | Number | 0 – 60 min | `paramw` |
+| Priority mode | Select | No priority / pH / Redox | `paramw` |
+| Dosing alarm pH / Redox threshold | Number | 0 (off) or ≥ 1 min | `alldow` |
+| Dosing alarm pH / Redox mode | Select | DOSE / STOP | `alldow` |
+| Probe failure pH / Redox threshold | Number | 0 (off) or 100 – 250 min | `allprw` |
+| Probe failure pH / Redox mode | Select | DOSE / STOP | `allprw` |
+| Flow mode | Select | Direct / Reverse / Disable | `flowsw` |
+| Flow time | Number | 0 – 99 min | `flowsw` |
+| DI Standby / pH level / Redox level is N.C. | Switch | Contact type N.O. / N.C. | `diginw` |
+| Sync clock to HA | Button | Pushes HA time to pump via `clockw` | `clockw` |
+
+**Diagnostic** — troubleshooting and unmapped fields:
+
+| Entity | Type | Purpose |
+|--------|------|---------|
+| Service counter | Sensor | Total service hours |
+| Service offset | Sensor | Internal offset |
+| Output 1 / 2 / 3 | Binary sensor | Relay states from `outptr` |
+| Alarm 4 / 5 / 6 / 7 (unknown) | Binary sensor | Un-mapped alarm bits |
+| Dosing alarm pH / Redox enabled | Binary sensor | Derived (minutes > 0) |
+| Probe failure pH / Redox enabled | Binary sensor | Derived (minutes > 0) |
+| valuer field 3 (unconfirmed) | Sensor | Suspected current dose %, always `0` in captures — awaiting live confirmation |
+| valuer field 4 (raw) | Sensor | Trailing status flag from `valuer` |
+| Restart connection | Button | Reconnects the TCP session |
+
+### Encoding convention (for reference)
+
+Writable enums encode as small integers/strings on the wire:
+
+- **Working mode** (pH / Redox): 0 = PROPORTIONAL, 1 = ON/OFF
+- **Priority**: 1 = No priority, 2 = pH priority, 3 = Redox priority
+- **Flow mode**: 0 = Disable, 1 = Reverse, 2 = Direct
+- **Dosing alarm mode / Probe failure mode**: 0 = DOSE, 1 = STOP
+- **DI contact type**: 0 = N.O., 1 = N.C.
+- **Enabled via minutes = 0**: dosing alarm and probe failure are considered
+  disabled when the corresponding minutes field is 0; setting a non-zero
+  value both enables the feature and configures its threshold.
+
+The write layouts of every command are documented at the top of
+`bridge/devices/emec_wdphrh.py`.
 
 ---
 

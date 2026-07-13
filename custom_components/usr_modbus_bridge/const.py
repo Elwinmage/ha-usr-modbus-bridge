@@ -2,6 +2,7 @@
 from __future__ import annotations
 from .bridge.devices.inverflow import InverFlowEco
 from .bridge.devices.hayward import HaywardHeatPump
+from .bridge.devices.emec_wdphrh import EmecWdphrh
 
 DOMAIN = "usr_modbus_bridge"
 
@@ -24,9 +25,9 @@ DEFAULT_SCAN_INTERVAL = 10
 DEFAULT_REPLY_DELAY   = 60             # ms (touch panel answers at ~77 ms)
 
 BAUD_RATES = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200]
-STOP_BITS  = [1, 2]
+STOP_BITS  = {1: "1", 2: "2"}
 PARITIES   = {"none": "None", "even": "Even", "odd": "Odd"}
-BYTE_SIZES = [7, 8]
+BYTE_SIZES = {7: "7", 8: "8"}
 
 GATEWAY_MODELS: dict[str, str] = {
     "USR-TCP232-304": "USR-TCP232-304",
@@ -36,11 +37,12 @@ GATEWAY_MODELS: dict[str, str] = {
 }
 
 DEVICE_PROFILES: dict[str, type] = {
-    InverFlowEco.DEVICE_KEY: InverFlowEco,
-    HaywardHeatPump.DEVICE_KEY: HaywardHeatPump,
+    InverFlowEco.DEVICE_KEY:      InverFlowEco,
+    HaywardHeatPump.DEVICE_KEY:   HaywardHeatPump,
+    EmecWdphrh.DEVICE_KEY:        EmecWdphrh,
 }
 
-COORDINATOR    = "coordinator"
-LISTENER       = "listener"
-PLATFORMS_KEY  = "platforms"
+COORDINATOR     = "coordinator"
+LISTENER        = "listener"
+PLATFORMS_KEY   = "platforms"
 SERVICE_RESTART = "restart"

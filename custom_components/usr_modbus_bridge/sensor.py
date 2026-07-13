@@ -1,4 +1,4 @@
-"""Sensor platform — numeric + text error sensor."""
+"""Sensor platform — numeric + text error sensor, plus EMEC sensors."""
 from __future__ import annotations
 
 from homeassistant.components.sensor import (
@@ -12,7 +12,9 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from homeassistant.helpers.device_registry import DeviceInfo
 from .bridge.devices.hayward import HAYWARD_SENSORS, HAYWARD_SETTING_SENSORS
-from .bridge.devices.inverflow import SENSOR_DESCRIPTIONS, decode_error
+from .bridge.devices.inverflow import SENSOR_DESCRIPTIONS as INVERFLOW_SENSORS, decode_error
+from .bridge.devices.emec_wdphrh import SENSOR_DESCRIPTIONS as EMEC_SENSORS
+from .bridge.emec_runtime import EmecBridgeCoordinator
 from .bridge.hayward_runtime import HaywardCoordinator
 from .const import COORDINATOR, DOMAIN
 from .coordinator import ModbusBridgeCoordinator
@@ -34,17 +36,19 @@ async def async_setup_entry(
         async_add_entities(ents)
         return
 
-    entities: list = []
+    # EMEC controller: iterate over its own descriptions dict.
+    if isinstance(coordinator, EmecBridgeCoordinator):
+        entities = [EmecSensor(coordinator, entry, key) for key in EMEC_SENSORS]
+        async_add_entities(entities)
+        return
 
-    # Real-time sensors
+    # Default: polled Modbus device (InverFlow etc.)
+    entities: list = []
     all_keys = coordinator.device.sensor_keys + getattr(coordinator.device, "diagnostic_keys", [])
     for key in all_keys:
-        if key in SENSOR_DESCRIPTIONS:
+        if key in INVERFLOW_SENSORS:
             entities.append(ModbusSensor(coordinator, entry, key))
-
-    # Error text sensor (decoded bitmask from register 2001)
     entities.append(ModbusErrorSensor(coordinator, entry))
-
     async_add_entities(entities)
 
 
@@ -54,7 +58,7 @@ class ModbusSensor(CoordinatorEntity[ModbusBridgeCoordinator], SensorEntity):
     def __init__(self, coordinator, entry: ConfigEntry, key: str) -> None:
         super().__init__(coordinator)
         self._key = key
-        desc = SENSOR_DESCRIPTIONS[key]
+        desc = INVERFLOW_SENSORS[key]
 
         self._attr_unique_id                  = f"{entry.entry_id}_{key}"
         self._attr_name                       = desc["name"]
@@ -138,6 +142,53 @@ class HaywardSensor(CoordinatorEntity[HaywardCoordinator], SensorEntity):
             name=coordinator.device_name,
             manufacturer="Hayward",
             model="Pool heat pump",
+        )
+
+    @property
+    def native_value(self):
+        return self.coordinator.get_value(self._key)
+
+    @property
+    def available(self) -> bool:
+        return self.coordinator.available and self.coordinator.get_value(self._key) is not None
+
+
+class EmecSensor(CoordinatorEntity[EmecBridgeCoordinator], SensorEntity):
+    """Sensor fed by the EMEC controller coordinator."""
+
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator: EmecBridgeCoordinator, entry: ConfigEntry, key: str) -> None:
+        super().__init__(coordinator)
+        self._key = key
+        desc = EMEC_SENSORS[key]
+
+        self._attr_unique_id                  = f"{entry.entry_id}_{key}"
+        self._attr_name                       = desc["name"]
+        self._attr_native_unit_of_measurement = desc.get("native_unit")
+        self._attr_icon                       = desc.get("icon")
+        self._attr_device_info                = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name=coordinator.device.name or coordinator.device.DEVICE_NAME,
+            manufacturer=coordinator.device.DEVICE_MANUFACTURER,
+            model=coordinator.device.DEVICE_NAME,
+        )
+
+        if desc.get("diagnostic"):
+            self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+        sc = desc.get("state_class")
+        self._attr_state_class = (
+            SensorStateClass.MEASUREMENT      if sc == "measurement"      else
+            SensorStateClass.TOTAL_INCREASING if sc == "total_increasing" else
+            None
+        )
+        dc = desc.get("device_class")
+        self._attr_device_class = (
+            SensorDeviceClass.PH          if dc == "ph"          else
+            SensorDeviceClass.VOLTAGE     if dc == "voltage"     else
+            SensorDeviceClass.TEMPERATURE if dc == "temperature" else
+            None
         )
 
     @property

@@ -7,6 +7,8 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PORT, Platform
 from homeassistant.core import HomeAssistant
 
+from .bridge.emec_client import EmecClient
+from .bridge.emec_runtime import EmecBridgeCoordinator
 from .bridge.hayward_runtime import HaywardCoordinator, HaywardListener
 from .bridge.modbus_client import ModbusTCPClient
 from .const import (CONF_BAUD, CONF_DEVICE_ADDRESS, CONF_DEVICE_KEY,
@@ -17,9 +19,16 @@ from .coordinator import ModbusBridgeCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-# Polled devices (InverFlow, ...) vs. listener devices (Hayward heat pump).
-POLLER_PLATFORMS = [Platform.SWITCH, Platform.SENSOR, Platform.NUMBER, Platform.BUTTON]
+POLLER_PLATFORMS   = [Platform.SWITCH, Platform.SENSOR, Platform.NUMBER, Platform.BUTTON]
 LISTENER_PLATFORMS = [Platform.SENSOR, Platform.CLIMATE]
+EMEC_PLATFORMS     = [
+    Platform.SENSOR,
+    Platform.BINARY_SENSOR,
+    Platform.NUMBER,
+    Platform.SELECT,
+    Platform.SWITCH,
+    Platform.BUTTON,
+]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -27,12 +36,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     cfg = {**entry.data, **entry.options}
     profile_cls = DEVICE_PROFILES[cfg[CONF_DEVICE_KEY]]
 
-    if getattr(profile_cls, "CONNECTION_MODE", "poller") == "listener":
+    mode = getattr(profile_cls, "CONNECTION_MODE", "poller")
+    if mode == "listener":
         return await _setup_listener(hass, entry, cfg, profile_cls)
+    if mode == "emec_poller":
+        return await _setup_emec_poller(hass, entry, cfg, profile_cls)
     return await _setup_poller(hass, entry, cfg, profile_cls)
 
-
-# ---- polled devices (unchanged behaviour) -----------------------------------
 
 async def _setup_poller(hass, entry, cfg, profile_cls) -> bool:
     device = profile_cls(name=cfg[CONF_NAME])
@@ -54,8 +64,6 @@ async def _setup_poller(hass, entry, cfg, profile_cls) -> bool:
     return True
 
 
-# ---- listener devices (Hayward heat pump) -----------------------------------
-
 async def _setup_listener(hass, entry, cfg, profile_cls) -> bool:
     reply_delay_ms = cfg.get(CONF_REPLY_DELAY, DEFAULT_REPLY_DELAY)
     listener = HaywardListener(
@@ -69,6 +77,31 @@ async def _setup_listener(hass, entry, cfg, profile_cls) -> bool:
         COORDINATOR: coordinator, LISTENER: listener, PLATFORMS_KEY: LISTENER_PLATFORMS,
     }
     await hass.config_entries.async_forward_entry_setups(entry, LISTENER_PLATFORMS)
+    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+    return True
+
+
+async def _setup_emec_poller(hass, entry, cfg, profile_cls) -> bool:
+    device = profile_cls(name=cfg[CONF_NAME])
+    slave_int = int(cfg.get(CONF_DEVICE_ADDRESS, profile_cls.DEFAULT_ADDRESS))
+    slave = f"{slave_int:02d}"
+
+    client = EmecClient(
+        host=cfg[CONF_HOST],
+        port=cfg[CONF_PORT],
+        prefix="34",
+        slave=slave,
+    )
+    await client.connect()
+
+    coordinator = EmecBridgeCoordinator(
+        hass, client, device, entry.entry_id,
+        scan_interval=cfg.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+    )
+    await coordinator.async_config_entry_first_refresh()
+
+    hass.data[DOMAIN][entry.entry_id] = {COORDINATOR: coordinator, PLATFORMS_KEY: EMEC_PLATFORMS}
+    await hass.config_entries.async_forward_entry_setups(entry, EMEC_PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
 

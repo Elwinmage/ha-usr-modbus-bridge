@@ -1,1 +1,94 @@
-{"config":{"step":{"user":{"title":"USR Modbus Bridge — Gateway","description":"Configura il convertitore seriale-ethernet USR","data":{"gateway_model":"Modello gateway","host":"Indirizzo IP","port":"Porta TCP","baud":"Velocità (baud)","byte_size":"Bit di dati","parity":"Parità","stop_bits":"Bit di stop"}},"device":{"title":"USR Modbus Bridge — Dispositivo","description":"Configura il dispositivo Modbus sul bus RS-485","data":{"device_key":"Tipo di dispositivo","device_address":"Indirizzo Modbus (1–254)","name":"Nome personalizzato","scan_interval":"Intervallo di lettura (secondi)"}}},"error":{"cannot_connect":"Impossibile connettersi al gateway — verificare IP e porta","device_not_found":"Il dispositivo non risponde — verificare indirizzo Modbus e cablaggio","unknown":"Errore imprevisto, controllare i log"},"abort":{"already_configured":"Questo dispositivo è già configurato"}},"options":{"step":{"init":{"title":"USR Modbus Bridge — Opzioni","description":"Modifica i parametri del bus e l'intervallo di lettura. L'integrazione verrà ricaricata automaticamente.","data":{"scan_interval":"Intervallo di lettura (secondi)","baud":"Velocità (baud)","byte_size":"Bit di dati","parity":"Parità","stop_bits":"Bit di stop"}}}},"entity":{"button":{"restart_connection":{"name":"Riavvia connessione"}},"switch":{"power":{"name":"Alimentazione"}},"number":{"speed_setpoint":{"name":"Setpoint velocità"}},"sensor":{"speed_pct":{"name":"Velocità"},"power_w":{"name":"Potenza"},"temp_c":{"name":"Temperatura motore"},"energy_day":{"name":"Energia oggi"},"energy_total":{"name":"Energia totale"}}}}
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "USR Modbus Bridge — Gateway",
+        "description": "Configura il convertitore seriale-ethernet USR",
+        "data": {
+          "gateway_model": "Modello gateway",
+          "host": "Indirizzo IP",
+          "port": "Porta TCP",
+          "baud": "Velocità (baud)",
+          "byte_size": "Bit di dati",
+          "parity": "Parità",
+          "stop_bits": "Bit di stop"
+        }
+      },
+      "device": {
+        "title": "USR Modbus Bridge — Dispositivo",
+        "description": "Configura il dispositivo Modbus sul bus RS-485",
+        "data": {
+          "device_key": "Tipo di dispositivo",
+          "device_address": "Indirizzo Modbus (1–254)",
+          "name": "Nome personalizzato",
+          "scan_interval": "Intervallo di lettura (secondi)"
+        }
+      },
+      "emec": {
+        "title": "EMEC controller",
+        "description": "RS-485 slave address (1-99) and poll interval.",
+        "data": {
+          "device_address": "RS-485 slave address",
+          "scan_interval": "Poll interval (seconds)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Impossibile connettersi al gateway — verificare IP e porta",
+      "device_not_found": "Il dispositivo non risponde — verificare indirizzo Modbus e cablaggio",
+      "unknown": "Errore imprevisto, controllare i log"
+    },
+    "abort": {
+      "already_configured": "Questo dispositivo è già configurato"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "USR Modbus Bridge — Opzioni",
+        "description": "Modifica i parametri del bus e l'intervallo di lettura. L'integrazione verrà ricaricata automaticamente.",
+        "data": {
+          "scan_interval": "Intervallo di lettura (secondi)",
+          "baud": "Velocità (baud)",
+          "byte_size": "Bit di dati",
+          "parity": "Parità",
+          "stop_bits": "Bit di stop"
+        }
+      }
+    }
+  },
+  "entity": {
+    "button": {
+      "restart_connection": {
+        "name": "Riavvia connessione"
+      }
+    },
+    "switch": {
+      "power": {
+        "name": "Alimentazione"
+      }
+    },
+    "number": {
+      "speed_setpoint": {
+        "name": "Setpoint velocità"
+      }
+    },
+    "sensor": {
+      "speed_pct": {
+        "name": "Velocità"
+      },
+      "power_w": {
+        "name": "Potenza"
+      },
+      "temp_c": {
+        "name": "Temperatura motore"
+      },
+      "energy_day": {
+        "name": "Energia oggi"
+      },
+      "energy_total": {
+        "name": "Energia totale"
+      }
+    }
+  }
+}

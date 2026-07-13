@@ -29,6 +29,14 @@
           "device_address": "Adresse Modbus",
           "scan_interval": "Intervalle d'interrogation (secondes)"
         }
+      },
+      "emec": {
+        "title": "Contrôleur EMEC",
+        "description": "Adresse RS-485 de l'esclave (1-99) et intervalle d'interrogation.",
+        "data": {
+          "device_address": "Adresse RS-485",
+          "scan_interval": "Intervalle d'interrogation (secondes)"
+        }
       }
     },
     "error": {
