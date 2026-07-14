@@ -1,7 +1,7 @@
 {
   "domain": "usr_modbus_bridge",
   "name": "USR Modbus Bridge",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "config_flow": true,
   "documentation": "https://github.com/Elwinmage/ha-usr-modbus-bridge",
   "issue_tracker": "https://github.com/Elwinmage/ha-usr-modbus-bridge/issues",

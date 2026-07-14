@@ -42,6 +42,13 @@ class EmecBridgeCoordinator(DataUpdateCoordinator[DeviceData]):
         self.entry_id = entry_id
         self._consecutive_errors = 0
         self._last_valid_data: datetime | None = None
+        # Sticky per-field values: preserved across polls so that a transient
+        # single-command failure (e.g. a temporary timeout on `paramtr`)
+        # doesn't blank out the entities that depend on it. Only fields whose
+        # read command answered this cycle get updated; the rest keep their
+        # last known value.
+        self._sticky_values: dict[str, Any] = {}
+        self._sticky_raw: dict[str, str] = {}
         super().__init__(
             hass, _LOGGER,
             name=f"emec_bridge_{entry_id}",
@@ -80,6 +87,21 @@ class EmecBridgeCoordinator(DataUpdateCoordinator[DeviceData]):
             _LOGGER.exception("Unexpected EMEC poll error")
             raise UpdateFailed(str(err)) from err
 
+        # Merge fresh values into the sticky store so that entities backed by
+        # a command that didn't answer this cycle keep their last known value
+        # instead of going 'unavailable'. Only successful fields overwrite.
+        if data.values:
+            self._sticky_values.update(data.values)
+        for k, v in data.raw.items():
+            if v is not None:
+                self._sticky_raw[k] = v
+
+        merged = DeviceData(
+            raw=dict(self._sticky_raw),
+            values=dict(self._sticky_values),
+            online=data.online,
+        )
+
         if not data.online:
             self._consecutive_errors += 1
             _LOGGER.warning(
@@ -93,7 +115,7 @@ class EmecBridgeCoordinator(DataUpdateCoordinator[DeviceData]):
             self._consecutive_errors = 0
             self._last_valid_data = datetime.now()
 
-        return data
+        return merged
 
     async def async_restart(self) -> None:
         _LOGGER.info("EMEC: manual restart")
